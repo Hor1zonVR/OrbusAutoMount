@@ -20,6 +20,10 @@
       <HintPath>$(GameDir)\BepInEx\core\Il2CppInterop.Runtime.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Il2Cppmscorlib">
+      <HintPath>$(GameDir)\BepInEx\interop\Il2Cppmscorlib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>$(GameDir)\BepInEx\interop\UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
@@ -36,5 +40,7 @@
            Text="Missing UnityEngine.CoreModule interop. Launch the modded instance once."/>
     <Error Condition="!Exists('$(GameDir)\BepInEx\interop\Assembly-CSharp.dll')"
            Text="Missing Assembly-CSharp interop. Launch the modded instance once."/>
+    <Error Condition="!Exists('$(GameDir)\BepInEx\interop\Il2Cppmscorlib.dll')"
+           Text="Missing Il2Cppmscorlib interop. Launch the modded instance once."/>
   </Target>
 </Project>
