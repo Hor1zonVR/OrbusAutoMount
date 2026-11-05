@@ -6,7 +6,7 @@ using BepInEx.Unity.IL2CPP;
 
 namespace OrbusAutoMount;
 
-[BepInPlugin("com.horizon.orbus.automount", "OrbusAutoMount", "0.1.0")]
+[BepInPlugin("com.horizon.orbus.automount", "OrbusAutoMount", "0.1.1")]
 public sealed class Plugin : BasePlugin
 {
     internal static ManualLogSource Logger = null!;
@@ -30,15 +30,19 @@ public sealed class Plugin : BasePlugin
                 new AcceptableValueRange<float>(0.25f, 5f),
                 "RebornMenu.Label=Auto-Mount Delay (seconds)"));
 
-        // This section is hidden from RebornMenu's normal player UI.
+        // Kept for backwards compatibility. Diagnostic summaries are
+        // enabled by default in v0.1.1 and already bounded; nothing
+        // sensitive (names, IDs, inventory details) is logged.
         Diagnostics = Config.Bind("Diagnostics", "LogTransitions", false,
-            "Log detected combat transitions, mount-state checks and " +
-            "exactly one summon attempt per combat exit.");
+            "Legacy diagnostic toggle. Version 0.1.1 always logs bounded " +
+            "state summaries and combat transitions for initial testing.");
 
         // BepInEx registers the IL2CPP MonoBehaviour and invokes its Update.
         AddComponent<AutoMountBehaviour>();
-        Logger.LogInfo("[AutoMount] v0.1.0 loaded (Enabled=" + Enabled.Value +
-            "). No forced mount state, no networking, no repeating summons. " +
-            "Native client method mapping: " + AutoMountGame.DescribeMapping() + ".");
+        Logger.LogInfo("[AutoMount] v0.1.1 loaded (Enabled=" + Enabled.Value +
+            "). The new /State lines confirm live RebornMenu toggle changes, " +
+            "combat observations and one-time summon/skipped reasons. " +
+            "Native client method mapping: " + AutoMountGame.DescribeMapping() +
+            ". No mount-state writes, networking or repeating summons.");
     }
 }
