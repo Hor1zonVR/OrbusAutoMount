@@ -5,8 +5,9 @@ namespace OrbusAutoMount;
 
 /// <summary>
 /// One native mount summon attempt per observed in-combat -> out-of-combat
-/// transition. v0.1.1 includes bounded, always-on lifecycle diagnostics
-/// so toggling Enabled in RebornMenu can be verified in a single game log.
+/// transition. v0.1.2 removes the incorrect mount-slot gate:
+/// the native game decides whether the player has an eligible equipped mount.
+/// Bounded diagnostics from v0.1.1 remain active.
 /// </summary>
 public sealed class AutoMountBehaviour : MonoBehaviour
 {
@@ -149,12 +150,18 @@ public sealed class AutoMountBehaviour : MonoBehaviour
                 return;
             }
 
-            if (!AutoMountGame.EquippedMount(avatar))
-            {
-                Plugin.Logger.LogInfo("[AutoMount/State] Summon skipped: " +
-                    "equipped mount slot or base item unavailable.");
-                return;
-            }
+            // IMPORTANT: The raw PlayerAvatar.mountSlot / cbn.bebp
+            // field is NOT a trustworthy eligibility check. v0.1.1
+            // repeatedly observed mounted=true with a null mount slot.
+            // We cannot infer "no equipped mount" from that field, so
+            // don't block the game's own normal summon action on it.
+            // The native method, not this read-only diagnostic, decides
+            // whether the character can summon in the current zone.
+            bool slotDiagnostic = AutoMountGame.EquippedMount(avatar);
+            if (!slotDiagnostic)
+                Plugin.Logger.LogInfo("[AutoMount/State] Legacy mount-slot " +
+                    "field unavailable; attempting the game's normal " +
+                    "SummonMount action anyway (native validation applies).");
 
             if (AutoMountGame.InCombat(player) != false ||
                 AutoMountGame.IsDead(player))
@@ -203,7 +210,7 @@ public sealed class AutoMountBehaviour : MonoBehaviour
             ", combat=" + fmt(combat) +
             ", avatar=" + (avatar != null ? "found" : "missing") +
             ", mounted=" + fmt(mounted) +
-            ", equippedMount=" +
+            ", legacyMountSlotPopulated=" +
                 (avatar != null && AutoMountGame.EquippedMount(avatar)) +
             ", nativeSummonMethod=" + AutoMountGame.SummonMethodAvailable() +
             ".");
