@@ -51,9 +51,16 @@ try {
     # published releases, so we can check the tag without a false failure.
     $releaseJson = & gh release list --repo 'Hor1zonVR/OrbusAutoMount' --json tagName --limit 100
     Check-Exit 'Checking existing GitHub releases'
-    $existingReleases = @($releaseJson | ConvertFrom-Json)
-    if ($existingReleases | Where-Object { $_.tagName -eq $tag }) {
-        throw "Release $tag already exists. Increment Plugin.cs version before another release."
+    # ConvertFrom-Json returns zero pipeline objects for [], but wrapping
+    # the pipeline in @() can still produce a null entry in Windows
+    # PowerShell. Never access .tagName on null under StrictMode.
+    $existingReleases = ConvertFrom-Json -InputObject ($releaseJson -join "`n")
+    foreach ($release in $existingReleases) {
+        if ($null -ne $release -and
+            $release.PSObject.Properties.Name -contains 'tagName' -and
+            $release.tagName -eq $tag) {
+            throw "Release $tag already exists. Increment Plugin.cs version before another release."
+        }
     }
 
     Write-Host "Building OrbusAutoMount $tag using reference instance: $GameDir"
