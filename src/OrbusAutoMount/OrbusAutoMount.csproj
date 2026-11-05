@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>OrbusAutoMount</AssemblyName>
+    <GameDir Condition="'$(GameDir)' == ''">$(LOCALAPPDATA)\OrbusRebornModdingInstances\My Orbus Renewed 2</GameDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="BepInEx.Core">
+      <HintPath>$(GameDir)\BepInEx\core\BepInEx.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="BepInEx.Unity.IL2CPP">
+      <HintPath>$(GameDir)\BepInEx\core\BepInEx.Unity.IL2CPP.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2CppInterop.Runtime">
+      <HintPath>$(GameDir)\BepInEx\core\Il2CppInterop.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(GameDir)\BepInEx\interop\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(GameDir)\BepInEx\interop\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="CheckInterop" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(GameDir)\BepInEx\core\BepInEx.Unity.IL2CPP.dll')"
+           Text="Missing IL2CPP BepInEx. Pass -p:GameDir=... to the selected Orbus instance."/>
+    <Error Condition="!Exists('$(GameDir)\BepInEx\interop\UnityEngine.CoreModule.dll')"
+           Text="Missing UnityEngine.CoreModule interop. Launch the modded instance once."/>
+    <Error Condition="!Exists('$(GameDir)\BepInEx\interop\Assembly-CSharp.dll')"
+           Text="Missing Assembly-CSharp interop. Launch the modded instance once."/>
+  </Target>
+</Project>
