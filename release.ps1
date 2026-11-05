@@ -44,8 +44,15 @@ try {
     & gh auth status
     Check-Exit 'Checking GitHub login'
 
-    & gh release view $tag --repo 'Hor1zonVR/OrbusAutoMount' *> $null
-    if ($LASTEXITCODE -eq 0) {
+    # A first release is NOT an error. gh release view exits nonzero
+    # and prints "release not found", which PowerShell can promote into
+    # a terminating NativeCommandError under ErrorActionPreference=Stop.
+    # Release listing succeeds and returns [] for a repository with no
+    # published releases, so we can check the tag without a false failure.
+    $releaseJson = & gh release list --repo 'Hor1zonVR/OrbusAutoMount' --json tagName --limit 100
+    Check-Exit 'Checking existing GitHub releases'
+    $existingReleases = @($releaseJson | ConvertFrom-Json)
+    if ($existingReleases | Where-Object { $_.tagName -eq $tag }) {
         throw "Release $tag already exists. Increment Plugin.cs version before another release."
     }
 
