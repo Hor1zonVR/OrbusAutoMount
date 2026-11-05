@@ -18,7 +18,7 @@ internal static class AutoMountGame
         BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
 
     private static Type? _playerType;
-    private static bool _searched;
+    private static float _nextClassSearch;
     private static MethodInfo? _summonMethod;
     private static bool _searchedSummon;
 
@@ -40,8 +40,12 @@ internal static class AutoMountGame
 
     internal static Type? PlayerType()
     {
-        if (_searched) return _playerType;
-        _searched = true;
+        if (_playerType != null) return _playerType;
+        if (Time.realtimeSinceStartup < _nextClassSearch) return null;
+
+        // Unity can load game interop later than the plugin itself. Retry
+        // sparingly rather than locking in a permanent null type at boot.
+        _nextClassSearch = Time.realtimeSinceStartup + 10f;
         _playerType = FindGameType("MagicalActual.PlayerCharacter") ??
                       FindGameType("ceh");
         return _playerType;
