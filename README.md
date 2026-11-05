@@ -2,7 +2,15 @@
 
 A lightweight, client-side BepInEx / IL2CPP quality-of-life mod for **OrbusVR Reborn**.
 
-**Status: experimental v0.1.1 source. v0.1.0 loads but did not auto-summon in the first user test.** The user had enabled the mod later in RebornMenu; the prior log only showed `Enabled=False` at startup and offered no evidence of the later toggle or combat state. v0.1.1 adds targeted evidence so the underlying cause can be verified.
+## v0.1.2 — fixed the false equipped-mount check
+
+The v0.1.1 live logs proved that RebornMenu was enabling AutoMount, the local combat state changed correctly, and the native summon method was available. The attempt never ran because our own check of `PlayerAvatar.mountSlot` / `cbn.bebp` returned false. In the same session the game reported `mounted=true` after a normal manual summon, so the empty slot field is not a reliable eligibility signal.
+
+**v0.1.2 removes that blocking check.** After a real combat exit and configured delay, while the player is active, alive, out of combat, and not already mounted, AutoMount invokes the game's own `PlayerCharacter.SummonMount()` / `ceh.lew()` action exactly once. We keep the old mount-slot result only as a clearly labelled diagnostic.
+
+The fix is pushed as source and needs to be locally compiled, published, and confirmed in-game; native mount restrictions have not yet been audited in Ghidra. Avoid testing in a mount-restricted area until this is verified.
+
+**Historical v0.1.1 diagnostic notes (superseded by v0.1.2 above).** The user had enabled the mod later in RebornMenu; the prior log only showed `Enabled=False` at startup and offered no evidence of the later toggle or combat state. v0.1.1 adds targeted evidence so the underlying cause can be verified.
 
 ### v0.1.1 diagnostic verification
 
@@ -13,7 +21,7 @@ The log will now contain:
 - `Combat START` and `Combat END` — actual transitions that schedule the one-time attempt.
 - `Summon skipped` or `Normal game summon invoked` — the exact result of the client action. This still does **not** prove server approval or successful mount spawning.
 
-**Test:** install v0.1.1 through RebornManager, launch the game, enable the setting under Settings → Mods → OrbusAutoMount, fight one easy enemy and exit combat. Share only the `[AutoMount/State]` lines if mounting still fails. No manual diagnostics toggle is needed.
+**Test:** install v0.1.1 through RebornManager, launch the game, enable the setting under Settings → Mods → OrbusAutoMount, fight one easy enemy and exit combat. Share only the `[AutoMount/State]` lines if mounting still fails after updating. No manual diagnostics toggle is needed.
 
 Do not confuse startup `Enabled=False` with whether the mod was enabled later. The old v0.1.0 logging could not distinguish those cases. No mounted-state writes or network modification are performed.
 
@@ -24,7 +32,7 @@ When **your own character leaves combat**, wait for a configurable delay and att
 - Triggers only after observing an actual **in-combat → out-of-combat** transition; it will not summon just because you've logged in.
 - Makes **one** summon attempt for each combat exit. No repeated summon spam.
 - Cancels the queued attempt if you re-enter combat.
-- Skips if you're already mounted, dead, in a loading/no-local-player state, or no valid mount item appears to be equipped.
+- Skips if you're already mounted, dead, in a loading/no-local-player state, or if combat has resumed. The native game handles mount item eligibility.
 - Uses the game's native summon method; doesn't write mount state, fake network messages, change your position, or bypass server-side restrictions.
 - Configs show automatically in **RebornMenu → Mods** with ordinary BepInEx entries.
 
@@ -47,7 +55,7 @@ When **your own character leaves combat**, wait for a configurable delay and att
 | `Monster.inCombat` | `bxm.bctj` | True/false state |
 | `PlayerCharacter.myPlayerAvatar` | `ceh.betm` | Player avatar |
 | `PlayerAvatar.isMounted` | `cbn.beka` | Mounted state |
-| `PlayerAvatar.mountSlot` | `cbn.bebp` | Equipped mount slot |
+| `PlayerAvatar.mountSlot` | `cbn.bebp` | Unreliable diagnostic only; **not a summon gate** |
 | `InventoryItemInstance.baseItem` | `cum.bjer` | Ensure slot has an actual item |
 | `PlayerCharacter.SummonMount()` | `ceh.lew()` | **Only** game action invoked |
 | `PlayerCharacter.MonsterInCombatChanged(bool)` | `ceh.ck(bool)` | Known event; not patched in v0.1.0 |
