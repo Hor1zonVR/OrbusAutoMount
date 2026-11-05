@@ -134,9 +134,11 @@ internal static class AutoMountGame
 
     internal static bool EquippedMount(object avatar)
     {
-        // PlayerAvatar.mountSlot (Community) / cbn.bebp (Spades) is an
-        // InventoryItemInstance. A slot object can exist without an item,
-        // so also require its non-null baseItem / obfuscated bjer.
+        // LEGACY DIAGNOSTIC ONLY — NOT an eligibility condition.
+        // v0.1.1 observed false here while PlayerAvatar.isMounted was true,
+        // meaning the mountSlot field is not reliable evidence of a
+        // missing equipped mount. Call the native SummonMount instead
+        // of blocking on the field. Keep reading for log comparison only.
         object? mountSlot = Either(avatar, "mountSlot", "bebp");
         return mountSlot != null &&
             Either(mountSlot, "baseItem", "bjer") != null;
