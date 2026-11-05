@@ -145,15 +145,20 @@ internal static class AutoMountGame
     private static MethodInfo? SummonMethod()
     {
         if (_searchedSummon) return _summonMethod;
-        _searchedSummon = true;
         Type? type = PlayerType();
         if (type == null) return null;
+
+        // Don't permanently cache "unavailable" if game assemblies
+        // haven't finished loading when the plugin first starts.
+        _searchedSummon = true;
         string name = type.FullName == "ceh" ? "lew" : "SummonMount";
         _summonMethod = type.GetMethods(All).FirstOrDefault(m =>
             m.Name == name && !m.IsStatic && m.ReturnType == typeof(void) &&
             m.GetParameters().Length == 0);
         return _summonMethod;
     }
+
+    internal static bool SummonMethodAvailable() => SummonMethod() != null;
 
     internal static bool TryNormalSummon(object player, out string reason)
     {
