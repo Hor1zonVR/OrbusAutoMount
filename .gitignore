@@ -1,0 +1,14 @@
+# Visual Studio / .NET
+**/bin/
+**/obj/
+.vs/
+.idea/
+*.user
+*.suo
+*.pdb
+
+# Game installs & local debugging
+BepInEx/
+OrbusVR_Data/
+*.log
+logs/
