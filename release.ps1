@@ -73,7 +73,7 @@ try {
     }
 
     Write-Host 'Publishing compiler-built EXPERIMENTAL client mod...'
-    $notes = 'Initial experimental IL2CPP client mod. Configurable enable switch (off by default) and summon delay, auto-discovered by RebornMenu. Polls local monster combat state, detects real combat to out-of-combat transitions, waits and invokes the native PlayerCharacter.SummonMount / ceh.lew action once. No forced mount state or manual networking edits. Native summon zone restrictions and combat-field mappings still require in-game verification. Not yet in RebornManager catalogue.'
+    $notes = 'Experimental v0.1.1 diagnostic update: BepInEx /State logs now explicitly confirm that the RebornMenu Enabled switch changes at runtime, the MonoBehaviour Update loop runs, and whether the local player, combat field, mounted state, equipped mount and native summon method resolve. Actual combat START/END and summon/skipped reasons are always logged. Status summaries every 12 seconds, capped at 25 with no names or identifiers. Fixes early caching of missing native summon method. Original one-attempt-per-combat-exit logic retained; no mount-state writes or manual networking. Game restriction checks are not yet verified.'
     & gh release create $tag $dll --repo 'Hor1zonVR/OrbusAutoMount' --target main --title "OrbusAutoMount $tag (experimental)" --notes $notes
     Check-Exit 'Publishing GitHub release'
 
