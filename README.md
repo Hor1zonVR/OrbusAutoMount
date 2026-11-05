@@ -2,7 +2,20 @@
 
 A lightweight, client-side BepInEx / IL2CPP quality-of-life mod for **OrbusVR Reborn**.
 
-**Status: experimental v0.1.0 source, not yet built or tested in-game.** RebornManager support is being prepared.
+**Status: experimental v0.1.1 source. v0.1.0 loads but did not auto-summon in the first user test.** The user had enabled the mod later in RebornMenu; the prior log only showed `Enabled=False` at startup and offered no evidence of the later toggle or combat state. v0.1.1 adds targeted evidence so the underlying cause can be verified.
+
+### v0.1.1 diagnostic verification
+
+The log will now contain:
+- `[AutoMount/State] Update loop running` — proves the BepInEx IL2CPP behaviour is receiving Unity Update.
+- `[AutoMount/State] Enabled changed to True/False` — proves live RebornMenu toggle is read (not just the startup configuration).
+- `phase=... player=... playerActive=... combat=... avatar=... mounted=... equippedMount=... nativeSummonMethod=...` — bounded metadata-only state report every 12 seconds, max 25.
+- `Combat START` and `Combat END` — actual transitions that schedule the one-time attempt.
+- `Summon skipped` or `Normal game summon invoked` — the exact result of the client action. This still does **not** prove server approval or successful mount spawning.
+
+**Test:** install v0.1.1 through RebornManager, launch the game, enable the setting under Settings → Mods → OrbusAutoMount, fight one easy enemy and exit combat. Share only the `[AutoMount/State]` lines if mounting still fails. No manual diagnostics toggle is needed.
+
+Do not confuse startup `Enabled=False` with whether the mod was enabled later. The old v0.1.0 logging could not distinguish those cases. No mounted-state writes or network modification are performed.
 
 ## What it does
 
