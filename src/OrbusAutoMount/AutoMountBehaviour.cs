@@ -4,10 +4,9 @@ using UnityEngine;
 namespace OrbusAutoMount;
 
 /// <summary>
-/// Detects ONLY a genuine in-combat -> out-of-combat transition of the
-/// active local player. After a short delay, asks Orbus to summon the
-/// equipped mount once. It does not attempt to restore prior mount state,
-/// because AutoMount intentionally summons after EVERY combat exit.
+/// One native mount summon attempt per observed in-combat -> out-of-combat
+/// transition. v0.1.1 includes bounded, always-on lifecycle diagnostics
+/// so toggling Enabled in RebornMenu can be verified in a single game log.
 /// </summary>
 public sealed class AutoMountBehaviour : MonoBehaviour
 {
@@ -18,6 +17,11 @@ public sealed class AutoMountBehaviour : MonoBehaviour
     private float _nextPoll;
     private float _scheduledAt = -1f;
     private bool _waitedForCombat;
+
+    private bool? _lastEnabled;
+    private float _nextStatus;
+    private int _statusCount;
+    private bool _reportedUpdate;
 
     private void ResetSession()
     {
@@ -32,24 +36,46 @@ public sealed class AutoMountBehaviour : MonoBehaviour
         if (Time.realtimeSinceStartup < _nextPoll) return;
         _nextPoll = Time.realtimeSinceStartup + 0.15f;
 
-        if (Plugin.Enabled == null || !Plugin.Enabled.Value)
+        if (!_reportedUpdate)
         {
-            if (_playerId != 0) ResetSession();
-            return;
+            _reportedUpdate = true;
+            Plugin.Logger.LogInfo("[AutoMount/State] Update loop running. " +
+                "RebornMenu Enabled changes will be reported here.");
         }
+
+        bool enabled = Plugin.Enabled?.Value == true;
+        if (_lastEnabled != enabled)
+        {
+            _lastEnabled = enabled;
+            ResetSession();
+            _nextStatus = 0f;
+            Plugin.Logger.LogInfo("[AutoMount/State] Enabled changed to " +
+                enabled + (enabled
+                    ? "; waiting for the next full combat cycle."
+                    : "; automatic summoning stopped."));
+        }
+        if (!enabled) return;
 
         try
         {
             object? player = AutoMountGame.LocalPlayer();
-            if (player == null || !AutoMountGame.IsActiveLocalPlayer(player))
+            if (player == null)
             {
-                if (_playerId != 0) ResetSession();
+                ReportStatus("waiting-for-player", null);
+                ResetSession();
+                return;
+            }
+            if (!AutoMountGame.IsActiveLocalPlayer(player))
+            {
+                ReportStatus("player-inactive", player);
+                ResetSession();
                 return;
             }
 
             int id = AutoMountGame.Identity(player);
             if (id == 0)
             {
+                ReportStatus("player-identity-unavailable", player);
                 ResetSession();
                 return;
             }
@@ -58,13 +84,15 @@ public sealed class AutoMountBehaviour : MonoBehaviour
             {
                 ResetSession();
                 _playerId = id;
-                Debug("New local player session; waiting to observe combat.");
+                Plugin.Logger.LogInfo("[AutoMount/State] Local character " +
+                    "ready; now watching actual combat transitions.");
             }
 
             bool? inCombat = AutoMountGame.InCombat(player);
             if (!inCombat.HasValue || AutoMountGame.IsDead(player))
             {
-                // Unknown state or death should never trigger a summon.
+                ReportStatus(inCombat.HasValue ? "dead" :
+                    "combat-field-unavailable", player);
                 _scheduledAt = -1f;
                 _lastCombat = null;
                 _waitedForCombat = false;
@@ -74,10 +102,14 @@ public sealed class AutoMountBehaviour : MonoBehaviour
             if (inCombat.Value)
             {
                 if (_lastCombat != true)
-                    Debug("Entered combat. Pending summon cancelled.");
+                {
+                    Plugin.Logger.LogInfo("[AutoMount/State] Combat START " +
+                        "observed (local player).");
+                }
                 _lastCombat = true;
                 _waitedForCombat = true;
                 _scheduledAt = -1f;
+                ReportStatus("in-combat", player);
                 return;
             }
 
@@ -86,66 +118,94 @@ public sealed class AutoMountBehaviour : MonoBehaviour
                 _scheduledAt = Time.realtimeSinceStartup +
                     Mathf.Clamp(Plugin.SummonDelay.Value, 0.25f, 5f);
                 _waitedForCombat = false;
-                Debug("Combat ended. Native mount attempt queued.");
+                Plugin.Logger.LogInfo("[AutoMount/State] Combat END " +
+                    "observed; one native summon attempt scheduled.");
             }
             _lastCombat = false;
 
             if (_scheduledAt < 0f || Time.realtimeSinceStartup < _scheduledAt)
-                return;
-
-            // Consume the transition BEFORE invoking game code, so even
-            // an exception or an invalid zone cannot cause rapid retries.
-            _scheduledAt = -1f;
-
-            object? avatar = AutoMountGame.Avatar(player);
-            if (avatar == null)
             {
-                Debug("Skipped: no loaded local avatar.");
+                ReportStatus(_scheduledAt < 0f ? "idle-out-of-combat" :
+                    "waiting-for-delay", player);
                 return;
             }
 
-            bool? alreadyMounted = AutoMountGame.IsMounted(avatar);
-            if (alreadyMounted != false)
+            // Consume first; never retry repeatedly due to failure.
+            _scheduledAt = -1f;
+            object? avatar = AutoMountGame.Avatar(player);
+            if (avatar == null)
             {
-                Debug(alreadyMounted == true
-                    ? "Skipped: already mounted."
-                    : "Skipped: mounted state unavailable.");
+                Plugin.Logger.LogInfo("[AutoMount/State] Summon skipped: " +
+                    "no active player avatar.");
+                return;
+            }
+
+            bool? mounted = AutoMountGame.IsMounted(avatar);
+            if (mounted != false)
+            {
+                Plugin.Logger.LogInfo("[AutoMount/State] Summon skipped: " +
+                    (mounted == true ? "already mounted." :
+                    "mounted-state property unavailable."));
                 return;
             }
 
             if (!AutoMountGame.EquippedMount(avatar))
             {
-                Debug("Skipped: no equipped mount item in mount slot.");
+                Plugin.Logger.LogInfo("[AutoMount/State] Summon skipped: " +
+                    "equipped mount slot or base item unavailable.");
                 return;
             }
 
-            // A final combat re-check avoids summoning after another
-            // monster puts the player back into combat.
             if (AutoMountGame.InCombat(player) != false ||
                 AutoMountGame.IsDead(player))
             {
-                Debug("Skipped: combat/death state changed.");
+                Plugin.Logger.LogInfo("[AutoMount/State] Summon skipped: " +
+                    "combat/death state changed during delay.");
                 return;
             }
 
             if (AutoMountGame.TryNormalSummon(player, out string reason))
-                Plugin.Logger.LogInfo("[AutoMount] Combat ended: " +
-                    reason + ". No further attempts until next combat exit.");
+                Plugin.Logger.LogInfo("[AutoMount/State] Normal game " +
+                    "summon invoked exactly once: " + reason);
             else
-                Plugin.Logger.LogWarning("[AutoMount] Could not invoke " +
-                    "normal game summon: " + reason);
+                Plugin.Logger.LogWarning("[AutoMount/State] Native summon " +
+                    "method unavailable or failed: " + reason);
+
+            ReportStatus("post-summon-attempt", player);
         }
         catch (Exception ex)
         {
             _scheduledAt = -1f;
-            Plugin.Logger.LogWarning("[AutoMount] Safe failure while checking " +
-                "local state: " + ex.GetType().Name + ": " + ex.Message);
+            Plugin.Logger.LogWarning("[AutoMount/State] Update check " +
+                "failed safely: " + ex.GetType().Name + ": " + ex.Message);
         }
     }
 
-    private static void Debug(string message)
+    private void ReportStatus(string phase, object? player)
     {
-        if (Plugin.Diagnostics?.Value == true)
-            Plugin.Logger.LogInfo("[AutoMount/Trace] " + message);
+        // Once every 12 seconds, max 25 short reports per session.
+        // No names, entity IDs, inventory contents or coordinates.
+        if (_statusCount >= 25 ||
+            Time.realtimeSinceStartup < _nextStatus) return;
+        _nextStatus = Time.realtimeSinceStartup + 12f;
+        _statusCount++;
+
+        object? avatar = player == null ? null : AutoMountGame.Avatar(player);
+        bool? combat = player == null ? null : AutoMountGame.InCombat(player);
+        bool? mounted = avatar == null ? null : AutoMountGame.IsMounted(avatar);
+        string fmt(bool? value) =>
+            value.HasValue ? (value.Value ? "true" : "false") : "unknown";
+
+        Plugin.Logger.LogInfo("[AutoMount/State] phase=" + phase +
+            ", player=" + (player == null ? "missing" : "found") +
+            ", playerActive=" + (player != null &&
+                AutoMountGame.IsActiveLocalPlayer(player)) +
+            ", combat=" + fmt(combat) +
+            ", avatar=" + (avatar != null ? "found" : "missing") +
+            ", mounted=" + fmt(mounted) +
+            ", equippedMount=" +
+                (avatar != null && AutoMountGame.EquippedMount(avatar)) +
+            ", nativeSummonMethod=" + AutoMountGame.SummonMethodAvailable() +
+            ".");
     }
 }
