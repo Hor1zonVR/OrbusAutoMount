@@ -6,7 +6,7 @@ using BepInEx.Unity.IL2CPP;
 
 namespace OrbusAutoMount;
 
-[BepInPlugin("com.horizon.orbus.automount", "OrbusAutoMount", "0.1.1")]
+[BepInPlugin("com.horizon.orbus.automount", "OrbusAutoMount", "0.1.2")]
 public sealed class Plugin : BasePlugin
 {
     internal static ManualLogSource Logger = null!;
@@ -39,10 +39,11 @@ public sealed class Plugin : BasePlugin
 
         // BepInEx registers the IL2CPP MonoBehaviour and invokes its Update.
         AddComponent<AutoMountBehaviour>();
-        Logger.LogInfo("[AutoMount] v0.1.1 loaded (Enabled=" + Enabled.Value +
-            "). The new /State lines confirm live RebornMenu toggle changes, " +
-            "combat observations and one-time summon/skipped reasons. " +
-            "Native client method mapping: " + AutoMountGame.DescribeMapping() +
+        Logger.LogInfo("[AutoMount] v0.1.2 loaded (Enabled=" + Enabled.Value +
+            "). Removed false 'no equipped mount' gate: the game can mount " +
+            "even when the legacy mount-slot diagnostic is empty. " +
+            "Real combat transitions call the native summon action once. " +
+            "Client method mapping: " + AutoMountGame.DescribeMapping() +
             ". No mount-state writes, networking or repeating summons.");
     }
 }
