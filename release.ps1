@@ -73,7 +73,7 @@ try {
     }
 
     Write-Host 'Publishing compiler-built EXPERIMENTAL client mod...'
-    $notes = 'Experimental v0.1.1 diagnostic update: BepInEx /State logs now explicitly confirm that the RebornMenu Enabled switch changes at runtime, the MonoBehaviour Update loop runs, and whether the local player, combat field, mounted state, equipped mount and native summon method resolve. Actual combat START/END and summon/skipped reasons are always logged. Status summaries every 12 seconds, capped at 25 with no names or identifiers. Fixes early caching of missing native summon method. Original one-attempt-per-combat-exit logic retained; no mount-state writes or manual networking. Game restriction checks are not yet verified.'
+    $notes = 'v0.1.2 fixes confirmed bug from gameplay logs: AutoMount correctly observed combat START/END and scheduled a summon, but then incorrectly skipped every attempt because the legacy PlayerAvatar.mountSlot check appeared empty—even during sessions when the user mounted normally. Removed that false eligibility gate. After combat ends, AutoMount now attempts the normal PlayerCharacter.SummonMount / ceh.lew method exactly once after the configured delay, as long as the local player/avatar are active, combat has ended and the player is not already mounted or dead. Existing bounded /State diagnostics remain. This is still experimental: native summon restrictions and success require live gameplay verification. No forced mounted-state writes or network packet changes.'
     & gh release create $tag $dll --repo 'Hor1zonVR/OrbusAutoMount' --target main --title "OrbusAutoMount $tag (experimental)" --notes $notes
     Check-Exit 'Publishing GitHub release'
 
