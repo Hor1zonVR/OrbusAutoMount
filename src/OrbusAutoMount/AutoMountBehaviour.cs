@@ -180,6 +180,10 @@ public sealed class AutoMountBehaviour : MonoBehaviour
             {
                 _lastMounted = true;
                 _attemptStreak = 0;
+                // A successful mount clears any retry backoff. If the
+                // player later dismounts voluntarily, only the short
+                // manual-dismount grace should apply.
+                _nextAttemptAt = now;
                 ReportStatus("mounted", player);
                 return;
             }
