@@ -4,12 +4,10 @@ using UnityEngine;
 namespace OrbusAutoMount;
 
 /// <summary>
-/// v0.1.3: Maintain the mounted state whenever the local character is alive,
-/// loaded and out of combat. This covers fresh logins, zone/instance loads,
-/// combat exits, and later dismounts without requiring another fight.
-///
-/// All actions use Orbus's normal SummonMount method, with a stable-world
-/// grace period, active-session guards and exponential retry cooldown.
+/// v0.1.4: Maintain mounted state after login, loads, combat and dismounts.
+/// Native summon retries use a session-wide cooldown that survives short
+/// mounted-state blips, combat transitions and avatar/scene reloads.
+/// Only a continuously mounted state resets the failure backoff.
 /// </summary>
 public sealed class AutoMountBehaviour : MonoBehaviour
 {
@@ -19,14 +17,22 @@ public sealed class AutoMountBehaviour : MonoBehaviour
     private const float DismountGraceSeconds = 2.5f;
     private const float FirstRetrySeconds = 12f;
     private const float MaxRetrySeconds = 90f;
+    private const float StableMountedSeconds = 5f;
+    private const float MinimumSummonSpacingSeconds = 8f;
 
     private int _playerId;
     private int _avatarId;
     private bool? _lastCombat;
     private bool? _lastMounted;
     private float _readyAt = -1f;
+    // Opportunity delay for combat exits, manual dismounts and world loads.
+    private float _resumeAfterAt;
+    // Session-wide native request throttle; never reset by combat/loading.
     private float _nextAttemptAt;
+    private float _lastNativeAttemptAt = -1f;
     private int _attemptStreak;
+    private float _mountedSince = -1f;
+    private bool _mountedStableConfirmed;
     private float _nextPoll;
 
     private bool? _lastEnabled;
@@ -34,15 +40,24 @@ public sealed class AutoMountBehaviour : MonoBehaviour
     private int _statusCount;
     private bool _reportedUpdate;
 
-    private void ResetSession()
+    private void ResetSession(bool clearCooldown)
     {
         _playerId = 0;
         _avatarId = 0;
         _lastCombat = null;
         _lastMounted = null;
+        _mountedSince = -1f;
+        _mountedStableConfirmed = false;
         _readyAt = -1f;
-        _nextAttemptAt = 0f;
-        _attemptStreak = 0;
+        _resumeAfterAt = 0f;
+        // A zone/character reload must NOT bypass a recent failed summon.
+        // Only explicitly changing Enabled begins a new throttle session.
+        if (clearCooldown)
+        {
+            _nextAttemptAt = 0f;
+            _lastNativeAttemptAt = -1f;
+            _attemptStreak = 0;
+        }
     }
 
     private void Update()
@@ -61,7 +76,7 @@ public sealed class AutoMountBehaviour : MonoBehaviour
         if (_lastEnabled != enabled)
         {
             _lastEnabled = enabled;
-            ResetSession();
+            ResetSession(true);
             _nextStatus = 0f;
             Plugin.Logger.LogInfo("[AutoMount/State] Enabled changed to " +
                 enabled + (enabled
@@ -77,21 +92,21 @@ public sealed class AutoMountBehaviour : MonoBehaviour
             {
                 ReportStatus(player == null ? "waiting-for-player" :
                     "player-inactive", player);
-                if (_playerId != 0) ResetSession();
+                if (_playerId != 0) ResetSession(false);
                 return;
             }
 
             int playerId = AutoMountGame.Identity(player);
             if (playerId == 0)
             {
-                ResetSession();
+                ResetSession(false);
                 ReportStatus("player-identity-unavailable", player);
                 return;
             }
 
             if (_playerId != playerId)
             {
-                ResetSession();
+                ResetSession(false);
                 _playerId = playerId;
                 Plugin.Logger.LogInfo("[AutoMount/State] New local character " +
                     "session; checking mount state after world settles.");
@@ -102,9 +117,10 @@ public sealed class AutoMountBehaviour : MonoBehaviour
             {
                 _avatarId = 0;
                 _lastMounted = null;
+                _mountedSince = -1f;
+                _mountedStableConfirmed = false;
                 _readyAt = -1f;
-                _nextAttemptAt = 0f;
-                _attemptStreak = 0;
+                _resumeAfterAt = 0f;
                 ReportStatus(avatar == null ? "waiting-for-avatar" :
                     "avatar-inactive", player);
                 return;
@@ -115,6 +131,8 @@ public sealed class AutoMountBehaviour : MonoBehaviour
             {
                 _avatarId = 0;
                 _readyAt = -1f;
+                _mountedSince = -1f;
+                _mountedStableConfirmed = false;
                 ReportStatus("avatar-identity-unavailable", player);
                 return;
             }
@@ -124,10 +142,11 @@ public sealed class AutoMountBehaviour : MonoBehaviour
                 _avatarId = avatarId;
                 _lastCombat = null;
                 _lastMounted = null;
-                _attemptStreak = 0;
+                _mountedSince = -1f;
+                _mountedStableConfirmed = false;
                 float loadDelay = Mathf.Clamp(Plugin.LoadDelay.Value, 1f, 15f);
                 _readyAt = now + loadDelay;
-                _nextAttemptAt = _readyAt;
+                _resumeAfterAt = _readyAt;
                 Plugin.Logger.LogInfo("[AutoMount/State] Avatar ready; " +
                     "waiting " + loadDelay + " seconds after " +
                     "load before first idle mount attempt.");
@@ -138,8 +157,10 @@ public sealed class AutoMountBehaviour : MonoBehaviour
             {
                 _lastCombat = null;
                 _lastMounted = null;
+                _mountedSince = -1f;
+                _mountedStableConfirmed = false;
                 _readyAt = now + Mathf.Clamp(Plugin.LoadDelay.Value, 1f, 15f);
-                _nextAttemptAt = Math.Max(_nextAttemptAt, _readyAt);
+                _resumeAfterAt = Math.Max(_resumeAfterAt, _readyAt);
                 ReportStatus(combat.HasValue ? "dead" :
                     "combat-field-unavailable", player);
                 return;
@@ -153,19 +174,21 @@ public sealed class AutoMountBehaviour : MonoBehaviour
                 _lastCombat = true;
                 // Combat may dismount the player; it isn't a manual dismount.
                 _lastMounted = null;
-                _attemptStreak = 0;
-                _nextAttemptAt = now + Plugin.SummonDelay.Value;
+                _mountedSince = -1f;
+                _mountedStableConfirmed = false;
+                _resumeAfterAt = Math.Max(_readyAt,
+                    now + Mathf.Clamp(Plugin.SummonDelay.Value, 0.25f, 5f));
                 ReportStatus("in-combat", player);
                 return;
             }
 
             if (_lastCombat == true)
             {
-                _attemptStreak = 0;
-                _nextAttemptAt = Math.Max(_readyAt,
+                _resumeAfterAt = Math.Max(_readyAt,
                     now + Mathf.Clamp(Plugin.SummonDelay.Value, 0.25f, 5f));
                 Plugin.Logger.LogInfo("[AutoMount/State] Combat END " +
-                    "observed; idle mount check scheduled.");
+                    "observed; idle check scheduled without resetting " +
+                    "native summon cooldown.");
             }
             _lastCombat = false;
 
@@ -178,24 +201,38 @@ public sealed class AutoMountBehaviour : MonoBehaviour
 
             if (mounted.Value)
             {
+                if (_mountedSince < 0f) _mountedSince = now;
                 _lastMounted = true;
-                _attemptStreak = 0;
-                // A successful mount clears any retry backoff. If the
-                // player later dismounts voluntarily, only the short
-                // manual-dismount grace should apply.
-                _nextAttemptAt = now;
+
+                // A single mounted=true poll is not proof that summoning
+                // succeeded. Only sustained mounting (5 seconds) can clear
+                // exponential backoff. Even then the last native call's
+                // minimum spacing remains in force.
+                if (!_mountedStableConfirmed &&
+                    now - _mountedSince >= StableMountedSeconds)
+                {
+                    _mountedStableConfirmed = true;
+                    _attemptStreak = 0;
+                    _nextAttemptAt = Math.Max(now,
+                        _lastNativeAttemptAt + MinimumSummonSpacingSeconds);
+                    Plugin.Logger.LogInfo("[AutoMount/State] Mounted " +
+                        "continuously for " + StableMountedSeconds +
+                        "s; retry backoff reset (minimum call spacing kept).");
+                }
                 ReportStatus("mounted", player);
                 return;
             }
+
+            _mountedSince = -1f;
+            _mountedStableConfirmed = false;
 
             if (_lastMounted == true)
             {
                 // If the player intentionally dismounts, allow a brief
                 // window to interact before our always-mounted mode acts.
                 // After an enemy dismount, _lastMounted was cleared above.
-                _nextAttemptAt = Math.Max(_nextAttemptAt,
+                _resumeAfterAt = Math.Max(_resumeAfterAt,
                     now + DismountGraceSeconds);
-                _attemptStreak = 0;
                 Plugin.Logger.LogInfo("[AutoMount/State] Dismount detected " +
                     "while idle; remount queued after short grace period.");
             }
@@ -207,7 +244,7 @@ public sealed class AutoMountBehaviour : MonoBehaviour
                 return;
             }
 
-            if (now < _nextAttemptAt)
+            if (now < _resumeAfterAt || now < _nextAttemptAt)
             {
                 ReportStatus("waiting-for-mount-cooldown", player);
                 return;
@@ -225,14 +262,16 @@ public sealed class AutoMountBehaviour : MonoBehaviour
                 return;
             }
 
-            // Consume a bounded retry window before invocation. Rejected
-            // summons (restricted zones, unavailable mounts, etc.) will
-            // back off to 12s / 24s / 48s / 90s, never spam every frame.
+            // Consume a bounded retry window BEFORE invoking the game.
+            // Combat, temporary mounting and area transitions never reset
+            // this exponential backoff. A stable mount does (above).
             float retry = Mathf.Min(MaxRetrySeconds,
                 FirstRetrySeconds * Mathf.Pow(2f,
                     Mathf.Min(_attemptStreak, 3)));
             _attemptStreak++;
-            _nextAttemptAt = now + retry;
+            _lastNativeAttemptAt = now;
+            _nextAttemptAt = now + Math.Max(retry,
+                MinimumSummonSpacingSeconds);
 
             if (AutoMountGame.TryNormalSummon(player, out string reason))
                 Plugin.Logger.LogInfo("[AutoMount/State] Idle summon request " +
@@ -249,7 +288,8 @@ public sealed class AutoMountBehaviour : MonoBehaviour
         catch (Exception ex)
         {
             // Fail closed, without rapid retries on repeated exceptions.
-            _nextAttemptAt = now + MaxRetrySeconds;
+            _nextAttemptAt = Math.Max(_nextAttemptAt,
+                now + MaxRetrySeconds);
             Plugin.Logger.LogWarning("[AutoMount/State] Mount maintenance " +
                 "check failed safely: " + ex.GetType().Name + ": " +
                 ex.Message);
@@ -279,6 +319,11 @@ public sealed class AutoMountBehaviour : MonoBehaviour
             ", mounted=" + fmt(mounted) +
             ", legacyMountSlotPopulated=" +
                 (avatar != null && AutoMountGame.EquippedMount(avatar)) +
+            ", stableMount=" + _mountedStableConfirmed +
+            ", retriesSinceStableMount=" + _attemptStreak +
+            ", cooldownSeconds=" +
+                Math.Max(0f, _nextAttemptAt - Time.realtimeSinceStartup)
+                    .ToString("0.0") +
             ", nativeSummonMethod=" + AutoMountGame.SummonMethodAvailable() +
             ".");
     }
