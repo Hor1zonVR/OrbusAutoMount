@@ -73,13 +73,13 @@ try {
     }
 
     Write-Host 'Publishing compiler-built EXPERIMENTAL client mod...'
-    $notes = 'v0.1.3 adds always-mounted maintenance while safely out of combat. The mod now attempts the normal game summon after an avatar finishes loading, after changing areas or shards, after combat ends, and after a later dismount without requiring another fight. After-load delay defaults to 3.5s (configurable in RebornMenu); post-combat delay remains configurable. A deliberate dismount receives a short 2.5s grace window. When the native game rejects a summon or the mount stays unmounted, retries back off at 12s, 24s, 48s, then 90s rather than spamming. Disabled, loading, dead, in-combat, inactive-avatar, already-mounted and unknown mounted-state conditions never trigger a summon. Uses only native PlayerCharacter.SummonMount/ceh.lew, does not modify mount/inventory/network state and cannot restore a truly unequipped mount item automatically. Still experimental. AutoMount was separately restored to the RM public catalogue on 2026-11-06.'
+    $notes = 'v0.1.4 fixes excessive summon requests diagnosed from the Nov 6 v0.1.3 log. The retry streak and absolute next-allowed summon time now survive combat transitions, temporary avatar/player loss, zone reloads, and brief mounted=true state changes. A successful mount must be observed continuously for five seconds before the retry streak clears; even then a minimum eight-second separation from the previous native summon request is preserved. Rejections or short mount-state blips back off 12, 24, 48, then 90 seconds. Fresh login, zone recovery, combat exit, idle dismount, per-user After-Load Delay and After-Combat Delay all remain supported with normal native SummonMount/ceh.lew calls. Log status includes stableMount, retriesSinceStableMount and cooldownSeconds. No forced mount/inventory/network state; native game restrictions still apply. The old physical-camera prototype is unrelated and unchanged.'
     & gh release create $tag $dll --repo 'Hor1zonVR/OrbusAutoMount' --target main --title "OrbusAutoMount $tag (experimental)" --notes $notes
     Check-Exit 'Publishing GitHub release'
 
     Write-Host ''
     Write-Host "SUCCESS: https://github.com/Hor1zonVR/OrbusAutoMount/releases/tag/$tag"
-    Write-Host 'Test locally before adding the mod to RM catalogue.'
+    Write-Host 'After release, refresh RebornManager and update AutoMount; test in-game before wider use.'
 }
 finally {
     Pop-Location
