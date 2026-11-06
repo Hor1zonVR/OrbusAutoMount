@@ -6,7 +6,7 @@ using BepInEx.Unity.IL2CPP;
 
 namespace OrbusAutoMount;
 
-[BepInPlugin("com.horizon.orbus.automount", "OrbusAutoMount", "0.1.3")]
+[BepInPlugin("com.horizon.orbus.automount", "OrbusAutoMount", "0.1.4")]
 public sealed class Plugin : BasePlugin
 {
     internal static ManualLogSource Logger = null!;
@@ -48,10 +48,11 @@ public sealed class Plugin : BasePlugin
 
         // BepInEx registers the IL2CPP MonoBehaviour and invokes its Update.
         AddComponent<AutoMountBehaviour>();
-        Logger.LogInfo("[AutoMount] v0.1.3 loaded (Enabled=" + Enabled.Value +
+        Logger.LogInfo("[AutoMount] v0.1.4 loaded (Enabled=" + Enabled.Value +
             "). Maintain mount after login, zone changes, combat exits " +
-            "and idle dismounts. Native retries back off 12-90s if still " +
-            "unmounted; never force mount state or send custom packets. " +
+            "and idle dismounts. Retry backoff 12-90s survives combat, " +
+            "loading and brief mounted-state changes; a continuous 5s " +
+            "mount clears backoff. No forced state or custom packets. " +
             "Client method mapping: " + AutoMountGame.DescribeMapping() + ".");
     }
 }
