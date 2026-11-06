@@ -16,7 +16,6 @@ public sealed class AutoMountBehaviour : MonoBehaviour
     public AutoMountBehaviour(IntPtr pointer) : base(pointer) { }
 
     private const float PollSeconds = 0.2f;
-    private const float WorldReadyGraceSeconds = 3.5f;
     private const float DismountGraceSeconds = 2.5f;
     private const float FirstRetrySeconds = 12f;
     private const float MaxRetrySeconds = 90f;
@@ -126,10 +125,11 @@ public sealed class AutoMountBehaviour : MonoBehaviour
                 _lastCombat = null;
                 _lastMounted = null;
                 _attemptStreak = 0;
-                _readyAt = now + WorldReadyGraceSeconds;
+                float loadDelay = Mathf.Clamp(Plugin.LoadDelay.Value, 1f, 15f);
+                _readyAt = now + loadDelay;
                 _nextAttemptAt = _readyAt;
                 Plugin.Logger.LogInfo("[AutoMount/State] Avatar ready; " +
-                    "waiting " + WorldReadyGraceSeconds + " seconds after " +
+                    "waiting " + loadDelay + " seconds after " +
                     "load before first idle mount attempt.");
             }
 
@@ -138,7 +138,7 @@ public sealed class AutoMountBehaviour : MonoBehaviour
             {
                 _lastCombat = null;
                 _lastMounted = null;
-                _readyAt = now + WorldReadyGraceSeconds;
+                _readyAt = now + Mathf.Clamp(Plugin.LoadDelay.Value, 1f, 15f);
                 _nextAttemptAt = Math.Max(_nextAttemptAt, _readyAt);
                 ReportStatus(combat.HasValue ? "dead" :
                     "combat-field-unavailable", player);
