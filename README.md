@@ -2,6 +2,31 @@
 
 A lightweight, client-side BepInEx / IL2CPP quality-of-life mod for **OrbusVR Reborn**.
 
+## v0.1.3 — stay mounted when out of combat
+
+AutoMount no longer requires a combat exit. While enabled, it keeps the normal mount summoned whenever the local character is loaded, alive, **out of combat**, and the game reports `isMounted=false`.
+
+- **First login / fresh character load:** after the local avatar is available, wait the configurable **After-Load Delay** (default 3.5 seconds), then attempt a normal native summon.
+- **Changing area/instance:** if the avatar changes or goes temporarily unavailable, wait for it to become active again; if the game dismounts an existing avatar without replacing it, detect `mounted=true → false` and remount.
+- **After combat:** keep the existing configurable 0.9-second post-combat delay.
+- **Other dismounts:** while idle, remount after a short 2.5-second grace period. **Manually dismounting will not stay permanent while AutoMount is enabled.** Disable it in RebornMenu when you intentionally want to remain on foot.
+- **No summon spam:** if a native summon does not result in a mounted state, retry only after a backoff of 12, 24, 48 and then 90 seconds. Native game restrictions still decide whether mounting is permitted.
+- **No forced equip:** this only deploys the mount already selected in Orbus through the normal summon method. If the game truly unequips or removes the mount *item* rather than simply dismounting you, v0.1.3 cannot automatically choose and re-equip it.
+
+Still experimental. The Quest and PC launchers/installers are unaffected; AutoMount remains **out of RebornManager's public catalogue** until explicitly reinstated.
+
+### v0.1.3 test plan
+
+1. Build/publish from `release.ps1`, then update the existing private AutoMount DLL (or test via local instance).
+2. With AutoMount enabled, join an open-world area **without fighting**. Check that the equipped mount appears a few seconds after the local avatar loads.
+3. Dismount manually while out of combat; it should summon again after roughly 2.5 seconds.
+4. Fight and exit combat: still remounts following the configured after-combat delay.
+5. Change instance or zone and confirm remounting once the local avatar settles.
+6. In a restricted area, it must not force or repeatedly spam a summon. The native game method retains authority; logs show bounded retry timing.
+7. If the mount item has actually become unequipped, capture that separately: the current mod cannot restore it.
+
+
+
 ## v0.1.2 — fixed the false equipped-mount check
 
 The v0.1.1 live logs proved that RebornMenu was enabling AutoMount, the local combat state changed correctly, and the native summon method was available. The attempt never ran because our own check of `PlayerAvatar.mountSlot` / `cbn.bebp` returned false. In the same session the game reported `mounted=true` after a normal manual summon, so the empty slot field is not a reliable eligibility signal.
@@ -27,11 +52,11 @@ Do not confuse startup `Enabled=False` with whether the mod was enabled later. T
 
 ## What it does
 
-When **your own character leaves combat**, wait for a configurable delay and attempt to summon the currently equipped mount using the **game's existing** `PlayerCharacter.SummonMount()` action. It intentionally does **not** require you to have been riding before combat.
+When the local avatar is ready and you are safely out of combat, try to maintain the mounted state using Orbus's existing `PlayerCharacter.SummonMount()` action. It no longer requires a combat transition.
 
-- Triggers only after observing an actual **in-combat → out-of-combat** transition; it will not summon just because you've logged in.
-- Makes **one** summon attempt for each combat exit. No repeated summon spam.
-- Cancels the queued attempt if you re-enter combat.
+- Attempts after initial login, after zone loads, after combat ends, and after becoming unmounted while idle.
+- Retries at an increasing interval when Orbus refuses a summon; it does **not** spam the native call.
+- Delays or skips attempts while in combat, dead, loading, already mounted, or with unknown state.
 - Skips if you're already mounted, dead, in a loading/no-local-player state, or if combat has resumed. The native game handles mount item eligibility.
 - Uses the game's native summon method; doesn't write mount state, fake network messages, change your position, or bypass server-side restrictions.
 - Configs show automatically in **RebornMenu → Mods** with ordinary BepInEx entries.
@@ -41,7 +66,7 @@ When **your own character leaves combat**, wait for a configurable delay and att
 | Setting | Default | Purpose |
 |---|---:|---|
 | General / Enabled | **Off** | Turn on after first cautious test |
-| General / SummonDelaySeconds | 0.9 s | Wait for combat lock to clear; range 0.25–5 s |
+| General / SummonDelaySeconds | 0.9 s | Wait after combat clears; range 0.25–5 s |\n| General / LoadDelaySeconds | 3.5 s | Wait after local avatar loads; range 1–15 s |
 | Diagnostics / LogTransitions | Off | Optional combat-transition and skip logs; not in normal RebornMenu |
 
 **Important:** The existence of native summon and combat methods is verified from the two IL2CPP dumps, but we have **not** yet verified whether `SummonMount()` itself rejects every restricted area. Test in a safe open-world area, then a dungeon or mount-restricted area only once the basic behaviour is confirmed.
