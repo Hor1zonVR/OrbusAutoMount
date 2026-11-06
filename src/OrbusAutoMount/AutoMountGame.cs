@@ -120,6 +120,18 @@ internal static class AutoMountGame
     internal static object? Avatar(object player) =>
         Either(player, "myPlayerAvatar", "betm");
 
+    internal static bool IsActiveAvatar(object avatar)
+    {
+        // Don't issue a native summon against an avatar that is disabled
+        // or inactive while Unity is changing scenes/instances.
+        if (avatar is Behaviour behaviour && !behaviour.isActiveAndEnabled)
+            return false;
+        if (avatar is Component component &&
+            !component.gameObject.activeInHierarchy)
+            return false;
+        return true;
+    }
+
     private static object? Monster(object player) =>
         Either(player, "myMonster", "betl");
 
