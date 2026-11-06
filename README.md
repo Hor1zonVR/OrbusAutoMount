@@ -13,11 +13,11 @@ AutoMount no longer requires a combat exit. While enabled, it keeps the normal m
 - **No summon spam:** if a native summon does not result in a mounted state, retry only after a backoff of 12, 24, 48 and then 90 seconds. Native game restrictions still decide whether mounting is permitted.
 - **No forced equip:** this only deploys the mount already selected in Orbus through the normal summon method. If the game truly unequips or removes the mount *item* rather than simply dismounting you, v0.1.3 cannot automatically choose and re-equip it.
 
-Still experimental. The Quest and PC launchers/installers are unaffected; AutoMount remains **out of RebornManager's public catalogue** until explicitly reinstated.
+Still experimental. The Quest and PC launchers/installers are unaffected. AutoMount was restored to RebornManager's public catalogue separately on 6 November 2026; publishing a GitHub release makes the update available to RM.
 
 ### v0.1.3 test plan
 
-1. Build/publish from `release.ps1`, then update the existing private AutoMount DLL (or test via local instance).
+1. Build/publish from `release.ps1`, then refresh and update OrbusAutoMount through RebornManager in your chosen instance.
 2. With AutoMount enabled, join an open-world area **without fighting**. Check that the equipped mount appears a few seconds after the local avatar loads.
 3. Dismount manually while out of combat; it should summon again after roughly 2.5 seconds.
 4. Fight and exit combat: still remounts following the configured after-combat delay.
