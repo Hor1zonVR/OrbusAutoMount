@@ -4,20 +4,31 @@ using UnityEngine;
 namespace OrbusAutoMount;
 
 /// <summary>
-/// One native mount summon attempt per observed in-combat -> out-of-combat
-/// transition. v0.1.2 removes the incorrect mount-slot gate:
-/// the native game decides whether the player has an eligible equipped mount.
-/// Bounded diagnostics from v0.1.1 remain active.
+/// v0.1.3: Maintain the mounted state whenever the local character is alive,
+/// loaded and out of combat. This covers fresh logins, zone/instance loads,
+/// combat exits, and later dismounts without requiring another fight.
+///
+/// All actions use Orbus's normal SummonMount method, with a stable-world
+/// grace period, active-session guards and exponential retry cooldown.
 /// </summary>
 public sealed class AutoMountBehaviour : MonoBehaviour
 {
     public AutoMountBehaviour(IntPtr pointer) : base(pointer) { }
 
+    private const float PollSeconds = 0.2f;
+    private const float WorldReadyGraceSeconds = 3.5f;
+    private const float DismountGraceSeconds = 2.5f;
+    private const float FirstRetrySeconds = 12f;
+    private const float MaxRetrySeconds = 90f;
+
     private int _playerId;
+    private int _avatarId;
     private bool? _lastCombat;
+    private bool? _lastMounted;
+    private float _readyAt = -1f;
+    private float _nextAttemptAt;
+    private int _attemptStreak;
     private float _nextPoll;
-    private float _scheduledAt = -1f;
-    private bool _waitedForCombat;
 
     private bool? _lastEnabled;
     private float _nextStatus;
@@ -27,21 +38,24 @@ public sealed class AutoMountBehaviour : MonoBehaviour
     private void ResetSession()
     {
         _playerId = 0;
+        _avatarId = 0;
         _lastCombat = null;
-        _scheduledAt = -1f;
-        _waitedForCombat = false;
+        _lastMounted = null;
+        _readyAt = -1f;
+        _nextAttemptAt = 0f;
+        _attemptStreak = 0;
     }
 
     private void Update()
     {
-        if (Time.realtimeSinceStartup < _nextPoll) return;
-        _nextPoll = Time.realtimeSinceStartup + 0.15f;
+        float now = Time.realtimeSinceStartup;
+        if (now < _nextPoll) return;
+        _nextPoll = now + PollSeconds;
 
         if (!_reportedUpdate)
         {
             _reportedUpdate = true;
-            Plugin.Logger.LogInfo("[AutoMount/State] Update loop running. " +
-                "RebornMenu Enabled changes will be reported here.");
+            Plugin.Logger.LogInfo("[AutoMount/State] Update loop running.");
         }
 
         bool enabled = Plugin.Enabled?.Value == true;
@@ -52,146 +66,195 @@ public sealed class AutoMountBehaviour : MonoBehaviour
             _nextStatus = 0f;
             Plugin.Logger.LogInfo("[AutoMount/State] Enabled changed to " +
                 enabled + (enabled
-                    ? "; waiting for the next full combat cycle."
-                    : "; automatic summoning stopped."));
+                    ? "; will maintain mount when safely out of combat."
+                    : "; automatic mounting stopped."));
         }
         if (!enabled) return;
 
         try
         {
             object? player = AutoMountGame.LocalPlayer();
-            if (player == null)
+            if (player == null || !AutoMountGame.IsActiveLocalPlayer(player))
             {
-                ReportStatus("waiting-for-player", null);
-                ResetSession();
-                return;
-            }
-            if (!AutoMountGame.IsActiveLocalPlayer(player))
-            {
-                ReportStatus("player-inactive", player);
-                ResetSession();
+                ReportStatus(player == null ? "waiting-for-player" :
+                    "player-inactive", player);
+                if (_playerId != 0) ResetSession();
                 return;
             }
 
-            int id = AutoMountGame.Identity(player);
-            if (id == 0)
+            int playerId = AutoMountGame.Identity(player);
+            if (playerId == 0)
             {
+                ResetSession();
                 ReportStatus("player-identity-unavailable", player);
-                ResetSession();
                 return;
             }
 
-            if (_playerId != id)
+            if (_playerId != playerId)
             {
                 ResetSession();
-                _playerId = id;
-                Plugin.Logger.LogInfo("[AutoMount/State] Local character " +
-                    "ready; now watching actual combat transitions.");
+                _playerId = playerId;
+                Plugin.Logger.LogInfo("[AutoMount/State] New local character " +
+                    "session; checking mount state after world settles.");
             }
 
-            bool? inCombat = AutoMountGame.InCombat(player);
-            if (!inCombat.HasValue || AutoMountGame.IsDead(player))
+            object? avatar = AutoMountGame.Avatar(player);
+            if (avatar == null || !AutoMountGame.IsActiveAvatar(avatar))
             {
-                ReportStatus(inCombat.HasValue ? "dead" :
-                    "combat-field-unavailable", player);
-                _scheduledAt = -1f;
+                _avatarId = 0;
+                _lastMounted = null;
+                _readyAt = -1f;
+                _nextAttemptAt = 0f;
+                _attemptStreak = 0;
+                ReportStatus(avatar == null ? "waiting-for-avatar" :
+                    "avatar-inactive", player);
+                return;
+            }
+
+            int avatarId = AutoMountGame.Identity(avatar);
+            if (avatarId == 0)
+            {
+                _avatarId = 0;
+                _readyAt = -1f;
+                ReportStatus("avatar-identity-unavailable", player);
+                return;
+            }
+
+            if (_avatarId != avatarId)
+            {
+                _avatarId = avatarId;
                 _lastCombat = null;
-                _waitedForCombat = false;
+                _lastMounted = null;
+                _attemptStreak = 0;
+                _readyAt = now + WorldReadyGraceSeconds;
+                _nextAttemptAt = _readyAt;
+                Plugin.Logger.LogInfo("[AutoMount/State] Avatar ready; " +
+                    "waiting " + WorldReadyGraceSeconds + " seconds after " +
+                    "load before first idle mount attempt.");
+            }
+
+            bool? combat = AutoMountGame.InCombat(player);
+            if (!combat.HasValue || AutoMountGame.IsDead(player))
+            {
+                _lastCombat = null;
+                _lastMounted = null;
+                _readyAt = now + WorldReadyGraceSeconds;
+                _nextAttemptAt = Math.Max(_nextAttemptAt, _readyAt);
+                ReportStatus(combat.HasValue ? "dead" :
+                    "combat-field-unavailable", player);
                 return;
             }
 
-            if (inCombat.Value)
+            if (combat.Value)
             {
                 if (_lastCombat != true)
-                {
                     Plugin.Logger.LogInfo("[AutoMount/State] Combat START " +
                         "observed (local player).");
-                }
                 _lastCombat = true;
-                _waitedForCombat = true;
-                _scheduledAt = -1f;
+                // Combat may dismount the player; it isn't a manual dismount.
+                _lastMounted = null;
+                _attemptStreak = 0;
+                _nextAttemptAt = now + Plugin.SummonDelay.Value;
                 ReportStatus("in-combat", player);
                 return;
             }
 
-            if (_lastCombat == true && _waitedForCombat)
+            if (_lastCombat == true)
             {
-                _scheduledAt = Time.realtimeSinceStartup +
-                    Mathf.Clamp(Plugin.SummonDelay.Value, 0.25f, 5f);
-                _waitedForCombat = false;
+                _attemptStreak = 0;
+                _nextAttemptAt = Math.Max(_readyAt,
+                    now + Mathf.Clamp(Plugin.SummonDelay.Value, 0.25f, 5f));
                 Plugin.Logger.LogInfo("[AutoMount/State] Combat END " +
-                    "observed; one native summon attempt scheduled.");
+                    "observed; idle mount check scheduled.");
             }
             _lastCombat = false;
 
-            if (_scheduledAt < 0f || Time.realtimeSinceStartup < _scheduledAt)
-            {
-                ReportStatus(_scheduledAt < 0f ? "idle-out-of-combat" :
-                    "waiting-for-delay", player);
-                return;
-            }
-
-            // Consume first; never retry repeatedly due to failure.
-            _scheduledAt = -1f;
-            object? avatar = AutoMountGame.Avatar(player);
-            if (avatar == null)
-            {
-                Plugin.Logger.LogInfo("[AutoMount/State] Summon skipped: " +
-                    "no active player avatar.");
-                return;
-            }
-
             bool? mounted = AutoMountGame.IsMounted(avatar);
-            if (mounted != false)
+            if (!mounted.HasValue)
             {
-                Plugin.Logger.LogInfo("[AutoMount/State] Summon skipped: " +
-                    (mounted == true ? "already mounted." :
-                    "mounted-state property unavailable."));
+                ReportStatus("mounted-state-unavailable", player);
                 return;
             }
 
-            // IMPORTANT: The raw PlayerAvatar.mountSlot / cbn.bebp
-            // field is NOT a trustworthy eligibility check. v0.1.1
-            // repeatedly observed mounted=true with a null mount slot.
-            // We cannot infer "no equipped mount" from that field, so
-            // don't block the game's own normal summon action on it.
-            // The native method, not this read-only diagnostic, decides
-            // whether the character can summon in the current zone.
-            bool slotDiagnostic = AutoMountGame.EquippedMount(avatar);
-            if (!slotDiagnostic)
-                Plugin.Logger.LogInfo("[AutoMount/State] Legacy mount-slot " +
-                    "field unavailable; attempting the game's normal " +
-                    "SummonMount action anyway (native validation applies).");
+            if (mounted.Value)
+            {
+                _lastMounted = true;
+                _attemptStreak = 0;
+                ReportStatus("mounted", player);
+                return;
+            }
 
+            if (_lastMounted == true)
+            {
+                // If the player intentionally dismounts, allow a brief
+                // window to interact before our always-mounted mode acts.
+                // After an enemy dismount, _lastMounted was cleared above.
+                _nextAttemptAt = Math.Max(_nextAttemptAt,
+                    now + DismountGraceSeconds);
+                _attemptStreak = 0;
+                Plugin.Logger.LogInfo("[AutoMount/State] Dismount detected " +
+                    "while idle; remount queued after short grace period.");
+            }
+            _lastMounted = false;
+
+            if (_readyAt < 0f || now < _readyAt)
+            {
+                ReportStatus("waiting-for-world-ready", player);
+                return;
+            }
+
+            if (now < _nextAttemptAt)
+            {
+                ReportStatus("waiting-for-mount-cooldown", player);
+                return;
+            }
+
+            // Recheck immediately before invoking native game code.
+            // Never manually change the mount flag, inventory or network.
             if (AutoMountGame.InCombat(player) != false ||
-                AutoMountGame.IsDead(player))
+                AutoMountGame.IsDead(player) ||
+                !AutoMountGame.IsActiveLocalPlayer(player) ||
+                !AutoMountGame.IsActiveAvatar(avatar) ||
+                AutoMountGame.IsMounted(avatar) != false)
             {
-                Plugin.Logger.LogInfo("[AutoMount/State] Summon skipped: " +
-                    "combat/death state changed during delay.");
+                ReportStatus("state-changed-before-attempt", player);
                 return;
             }
+
+            // Consume a bounded retry window before invocation. Rejected
+            // summons (restricted zones, unavailable mounts, etc.) will
+            // back off to 12s / 24s / 48s / 90s, never spam every frame.
+            float retry = Mathf.Min(MaxRetrySeconds,
+                FirstRetrySeconds * Mathf.Pow(2f,
+                    Mathf.Min(_attemptStreak, 3)));
+            _attemptStreak++;
+            _nextAttemptAt = now + retry;
 
             if (AutoMountGame.TryNormalSummon(player, out string reason))
-                Plugin.Logger.LogInfo("[AutoMount/State] Normal game " +
-                    "summon invoked exactly once: " + reason);
+                Plugin.Logger.LogInfo("[AutoMount/State] Idle summon request " +
+                    "#" + _attemptStreak + ": " + reason +
+                    "; if still unmounted, retry no sooner than " +
+                    retry + "s.");
             else
-                Plugin.Logger.LogWarning("[AutoMount/State] Native summon " +
-                    "method unavailable or failed: " + reason);
+                Plugin.Logger.LogWarning("[AutoMount/State] Idle summon " +
+                    "request failed: " + reason +
+                    "; retry no sooner than " + retry + "s.");
 
-            ReportStatus("post-summon-attempt", player);
+            ReportStatus("post-idle-summon-request", player);
         }
         catch (Exception ex)
         {
-            _scheduledAt = -1f;
-            Plugin.Logger.LogWarning("[AutoMount/State] Update check " +
-                "failed safely: " + ex.GetType().Name + ": " + ex.Message);
+            // Fail closed, without rapid retries on repeated exceptions.
+            _nextAttemptAt = now + MaxRetrySeconds;
+            Plugin.Logger.LogWarning("[AutoMount/State] Mount maintenance " +
+                "check failed safely: " + ex.GetType().Name + ": " +
+                ex.Message);
         }
     }
 
     private void ReportStatus(string phase, object? player)
     {
-        // Once every 12 seconds, max 25 short reports per session.
-        // No names, entity IDs, inventory contents or coordinates.
+        // Bounded metadata-only diagnostics, max 25 summaries per game.
         if (_statusCount >= 25 ||
             Time.realtimeSinceStartup < _nextStatus) return;
         _nextStatus = Time.realtimeSinceStartup + 12f;
