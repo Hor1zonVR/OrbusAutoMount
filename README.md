@@ -2,6 +2,21 @@
 
 A lightweight, client-side BepInEx / IL2CPP quality-of-life mod for **OrbusVR Reborn**.
 
+## v0.1.4 — cooldown resets only after a *stable* mount
+
+The v0.1.3 game log showed excessive repeated summon requests: briefly reading `mounted=true`, observing combat, or reloading an avatar could reset the exponential retry counter. Many attempted summons were consequently labelled `#1` instead of obeying the intended 12/24/48/90-second backoff.
+
+**v0.1.4 keeps the cooldown across combat, dismounts and area/instance loads.** A continuously mounted state lasting **5 seconds** is required before counting a native summon as stable enough to clear the retry streak. Even then, at least **8 seconds** must elapse after the last native summon call before another is allowed. A fresh login still auto-summons once the character/active avatar have loaded and the configured load delay has elapsed.
+
+- No forced mount-state writes, no inventory edits and no custom network packets.
+- If the native game refuses a summon or a mount flickers on/off, the backoff escalates to **12, 24, 48 and 90 seconds**.
+- Normal combat-exit, initial login, zone reload and idle dismount detection are preserved.
+- Bounded log status includes `stableMount`, `retriesSinceStableMount` and `cooldownSeconds` for future verification.
+- **Test:** Update through RM after publishing the v0.1.4 DLL. Log in without fighting, then repeatedly dismount/fight/change zones and check that mount calls are spaced appropriately; you should see a `Mounted continuously for 5s` log after actually staying mounted.
+- v0.1.4 is a source update until locally built and published with `release.ps1`; a successful native invocation does not independently prove the mount stayed summoned.
+
+
+
 ## v0.1.3 — stay mounted when out of combat
 
 AutoMount no longer requires a combat exit. While enabled, it keeps the normal mount summoned whenever the local character is loaded, alive, **out of combat**, and the game reports `isMounted=false`.
